@@ -1,0 +1,24 @@
+data:
+  root_dir: "data/raw/"
+  subjects: ["subject_001", "subject_002"]  # List of subject folders or files
+  batch_size: 1  # 3D volumes often use batch_size=1 due to memory
+  num_workers: 0  # Set to 0 for medical images to avoid multiprocessing issues
+
+model:
+  in_channels: 2  # CT + T2-w concatenated
+  localization_channels: [8, 10]  # CNN layers for localization net
+  affine_params: 12  # 3x4 affine matrix flattened (for 3D: 12 params)
+  learning_rate: 0.001
+  epochs: 100
+  device: "cuda" if available else "cpu"
+
+transforms:
+  degrees: [-15, 15]  # Rotation range in degrees
+  translate: [0.1, 0.1, 0.1]  # Fraction of FOV for translation
+  scale: [0.9, 1.1]  # Scaling range
+  shear: [-0.1, 0.1]  # Shearing range
+
+loss:
+  lambda_affine: 1.0  # Weight for affine prediction loss (MSE)
+  lambda_mi: 1.0      # Weight for mutual information
+  patch_size: [32, 32, 32]  # For local MI computation to reduce noise

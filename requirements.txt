@@ -1,0 +1,9 @@
+numpy
+torch>=2.0.0
+torchio>=0.18.0
+nibabel
+matplotlib
+pyyaml
+tqdm
+simpleitk  # For MI computation if needed
+scikit-image  # For advanced metrics
