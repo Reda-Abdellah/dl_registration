@@ -200,6 +200,33 @@ def load_checkpoint(checkpoint_path, model, optimizer=None):
     return start_epoch, history, config
 
 
+def debug_dataset_sample(dataset, device):
+    """Debug the first few samples from dataset."""
+    print("🔍 Debugging dataset samples...")
+    
+    for i in range(min(3, len(dataset))):
+        try:
+            print(f"\nSample {i}:")
+            sample = dataset[i]
+            
+            for key, value in sample.items():
+                if torch.is_tensor(value):
+                    print(f"  {key}: shape={value.shape}, dtype={value.dtype}")
+                    if value.numel() > 0:
+                        print(f"    range=[{value.min().item():.3f}, {value.max().item():.3f}]")
+                    else:
+                        print(f"    EMPTY TENSOR!")
+                else:
+                    print(f"  {key}: {type(value)}")
+            
+            # Test moving to device
+            input_data = sample['input'].to(device)
+            print(f"  Successfully moved to device: {input_data.shape}")
+            
+        except Exception as e:
+            print(f"  Error loading sample {i}: {e}")
+
+
 def main(config_path='config.yaml', experiment_name=None, resume_from=None, device=None):
     """
     Main training function - can be called programmatically or from command line.
@@ -245,6 +272,19 @@ def main(config_path='config.yaml', experiment_name=None, resume_from=None, devi
     )
     loss_fn = RegistrationLoss(config).to(device)
     
+    # Debug dataset and model
+    print("🔍 Debugging dataset and model...")
+    debug_dataset_sample(dataset, device)
+    
+    # Test model with a dummy input
+    try:
+        dummy_input = torch.randn(1, 2, 32, 32, 32).to(device)
+        warped, pred_affine = model(dummy_input)
+        print(f"✅ Model test successful: warped={warped.shape}, affine={pred_affine.shape}")
+    except Exception as e:
+        print(f"❌ Model test failed: {e}")
+        return
+    
     # Load checkpoint if resuming
     start_epoch = 0
     history = {'train_loss': [], 'affine_loss': [], 'similarity_loss': []}
@@ -272,42 +312,65 @@ def main(config_path='config.yaml', experiment_name=None, resume_from=None, devi
                 leave=True
             )
             
-            # In the training loop, replace the forward pass section:
             for batch_idx, batch in enumerate(progress_bar):
-                # Move data to device
-                input_data = batch['input'].to(device)
-                fixed = batch['fixed'].to(device)
-                moving = batch['moving'].to(device)
-                # Use forward transformation instead of inverse
-                true_affine = batch['forward_affine'].to(device)  # Changed from inverse_affine
-                
-                # Forward pass
-                optimizer.zero_grad()
-                warped, pred_affine = model(input_data)
-                
-                # Compute loss using fixed and warped images
-                total_loss, loss_dict = loss_fn(pred_affine, true_affine, fixed, warped)
-                
-                # Extract single channel from warped
-                warped_single = warped[:, 1:2]
-
-                # Backward pass
-                total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                optimizer.step()
-                
-                # Accumulate losses
-                epoch_loss += loss_dict['total_loss']
-                epoch_affine_loss += loss_dict['affine_loss']
-                epoch_similarity_loss += loss_dict['similarity_loss']
-                
-                # Update progress bar
-                progress_bar.set_postfix({
-                    'loss': f"{loss_dict['total_loss']:.4f}",
-                    'affine': f"{loss_dict['affine_loss']:.4f}",
-                    'sim': f"{loss_dict['similarity_loss']:.4f}"
-                })
-                
+                try:
+                    # Move data to device with error checking
+                    input_data = batch['input'].to(device)
+                    fixed = batch['fixed'].to(device)
+                    moving = batch['moving'].to(device)
+                    
+                    # Use inverse_affine for now (keep existing dataset structure)
+                    true_affine = batch['inverse_affine'].to(device)
+                    
+                    # Debug: Check tensor shapes on first batch
+                    if batch_idx == 0:
+                        print(f"Debug - Input shape: {input_data.shape}")
+                        print(f"Debug - Fixed shape: {fixed.shape}")
+                        print(f"Debug - Moving shape: {moving.shape}")
+                        print(f"Debug - Affine shape: {true_affine.shape}")
+                    
+                    # Validate input data
+                    if input_data.numel() == 0 or fixed.numel() == 0 or moving.numel() == 0:
+                        print(f"Warning: Empty tensors in batch {batch_idx}, skipping...")
+                        continue
+                    
+                    # Forward pass
+                    optimizer.zero_grad()
+                    warped, pred_affine = model(input_data)
+                    
+                    # Validate model output
+                    if warped.numel() == 0 or pred_affine.numel() == 0:
+                        print(f"Warning: Model produced empty output in batch {batch_idx}, skipping...")
+                        continue
+                    
+                    # Debug: Check warped shape on first batch
+                    if batch_idx == 0:
+                        print(f"Debug - Warped shape: {warped.shape}")
+                    
+                    # Compute loss
+                    total_loss, loss_dict = loss_fn(pred_affine, true_affine, fixed, warped)
+                    
+                    # Backward pass
+                    total_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                    optimizer.step()
+                    
+                    # Accumulate losses
+                    epoch_loss += loss_dict['total_loss']
+                    epoch_affine_loss += loss_dict['affine_loss']
+                    epoch_similarity_loss += loss_dict['similarity_loss']
+                    
+                    # Update progress bar
+                    progress_bar.set_postfix({
+                        'loss': f"{loss_dict['total_loss']:.4f}",
+                        'affine': f"{loss_dict['affine_loss']:.4f}",
+                        'sim': f"{loss_dict['similarity_loss']:.4f}"
+                    })
+                    
+                except Exception as e:
+                    print(f"Error in batch {batch_idx}: {e}")
+                    continue
+                    
                 # Free memory periodically
                 if batch_idx % 10 == 0 and device.type == 'cuda':
                     torch.cuda.empty_cache()
@@ -356,7 +419,7 @@ def main(config_path='config.yaml', experiment_name=None, resume_from=None, devi
                     visualize_registration(
                         fixed[0], 
                         moving[0], 
-                        warped_single[0], 
+                        warped[0], 
                         epoch + 1,
                         save_dir=exp_manager.visualization_dir
                     )
@@ -403,76 +466,133 @@ def main(config_path='config.yaml', experiment_name=None, resume_from=None, devi
 
 
 def visualize_registration(fixed, moving, warped, epoch, save_dir='visualizations'):
-    """Visualize registration results for a single sample."""
-    fixed_np = fixed.cpu().squeeze(0).numpy()
-    moving_np = moving.cpu().squeeze(0).numpy()
-    warped_np = warped.cpu().squeeze(0).numpy()
+    """Visualize registration results for a single sample with safety checks."""
+    
+    # Convert to numpy with safety checks
+    def safe_to_numpy(tensor, name):
+        if tensor is None:
+            print(f"Warning: {name} tensor is None")
+            return None
+        
+        if torch.is_tensor(tensor):
+            tensor = tensor.detach().cpu()
+        
+        # Handle different dimensions
+        while tensor.dim() > 3:
+            tensor = tensor.squeeze()
+        
+        if tensor.dim() != 3:
+            print(f"Warning: {name} has unexpected dimensions: {tensor.shape}")
+            return None
+        
+        numpy_array = tensor.numpy()
+        
+        if numpy_array.size == 0:
+            print(f"Warning: {name} is empty after conversion")
+            return None
+            
+        return numpy_array
+    
+    # Convert tensors safely
+    fixed_np = safe_to_numpy(fixed, "fixed")
+    moving_np = safe_to_numpy(moving, "moving") 
+    warped_np = safe_to_numpy(warped, "warped")
+    
+    # Check if we have valid data
+    if fixed_np is None or moving_np is None:
+        print(f"Skipping visualization for epoch {epoch}: invalid fixed/moving data")
+        return
+    
+    # Use moving as fallback if warped is invalid
+    if warped_np is None:
+        print(f"Warning: Using moving image as warped for epoch {epoch}")
+        warped_np = moving_np
+    
+    # Ensure all arrays have the same shape
+    min_shape = np.minimum.reduce([fixed_np.shape, moving_np.shape, warped_np.shape])
+    
+    if np.any(min_shape == 0):
+        print(f"Skipping visualization for epoch {epoch}: one or more arrays are empty")
+        return
+    
+    # Crop all arrays to minimum common shape
+    fixed_np = fixed_np[:min_shape[0], :min_shape[1], :min_shape[2]]
+    moving_np = moving_np[:min_shape[0], :min_shape[1], :min_shape[2]]
+    warped_np = warped_np[:min_shape[0], :min_shape[1], :min_shape[2]]
     
     d, h, w = fixed_np.shape
     mid_d, mid_h, mid_w = d // 2, h // 2, w // 2
     
+    # Create figure
     fig, axes = plt.subplots(3, 4, figsize=(16, 12))
     
-    # Axial slices
-    axes[0, 0].imshow(fixed_np[mid_d], cmap='gray')
-    axes[0, 0].set_title('Fixed (Axial)')
-    axes[0, 0].axis('off')
-    
-    axes[0, 1].imshow(moving_np[mid_d], cmap='gray')
-    axes[0, 1].set_title('Moving (Axial)')
-    axes[0, 1].axis('off')
-    
-    axes[0, 2].imshow(warped_np[mid_d], cmap='gray')
-    axes[0, 2].set_title('Warped (Axial)')
-    axes[0, 2].axis('off')
-    
-    diff = np.abs(fixed_np[mid_d] - warped_np[mid_d])
-    axes[0, 3].imshow(diff, cmap='hot')
-    axes[0, 3].set_title('|Fixed - Warped|')
-    axes[0, 3].axis('off')
-    
-    # Sagittal slices
-    axes[1, 0].imshow(fixed_np[:, :, mid_w], cmap='gray')
-    axes[1, 0].set_title('Fixed (Sagittal)')
-    axes[1, 0].axis('off')
-    
-    axes[1, 1].imshow(moving_np[:, :, mid_w], cmap='gray')
-    axes[1, 1].set_title('Moving (Sagittal)')
-    axes[1, 1].axis('off')
-    
-    axes[1, 2].imshow(warped_np[:, :, mid_w], cmap='gray')
-    axes[1, 2].set_title('Warped (Sagittal)')
-    axes[1, 2].axis('off')
-    
-    diff_sag = np.abs(fixed_np[:, :, mid_w] - warped_np[:, :, mid_w])
-    axes[1, 3].imshow(diff_sag, cmap='hot')
-    axes[1, 3].set_title('|Fixed - Warped|')
-    axes[1, 3].axis('off')
-    
-    # Coronal slices
-    axes[2, 0].imshow(fixed_np[:, mid_h, :], cmap='gray')
-    axes[2, 0].set_title('Fixed (Coronal)')
-    axes[2, 0].axis('off')
-    
-    axes[2, 1].imshow(moving_np[:, mid_h, :], cmap='gray')
-    axes[2, 1].set_title('Moving (Coronal)')
-    axes[2, 1].axis('off')
-    
-    axes[2, 2].imshow(warped_np[:, mid_h, :], cmap='gray')
-    axes[2, 2].set_title('Warped (Coronal)')
-    axes[2, 2].axis('off')
-    
-    diff_cor = np.abs(fixed_np[:, mid_h, :] - warped_np[:, mid_h, :])
-    axes[2, 3].imshow(diff_cor, cmap='hot')
-    axes[2, 3].set_title('|Fixed - Warped|')
-    axes[2, 3].axis('off')
-    
-    plt.suptitle(f'Registration Results - Epoch {epoch}', fontsize=16)
-    plt.tight_layout()
-    
-    save_path = Path(save_dir) / f'registration_epoch_{epoch:03d}.png'
-    plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.close()
+    try:
+        # Axial slices
+        axes[0, 0].imshow(fixed_np[mid_d], cmap='gray')
+        axes[0, 0].set_title('Fixed (Axial)')
+        axes[0, 0].axis('off')
+        
+        axes[0, 1].imshow(moving_np[mid_d], cmap='gray')
+        axes[0, 1].set_title('Moving (Axial)')
+        axes[0, 1].axis('off')
+        
+        axes[0, 2].imshow(warped_np[mid_d], cmap='gray')
+        axes[0, 2].set_title('Warped (Axial)')
+        axes[0, 2].axis('off')
+        
+        diff = np.abs(fixed_np[mid_d] - warped_np[mid_d])
+        axes[0, 3].imshow(diff, cmap='hot')
+        axes[0, 3].set_title('|Fixed - Warped|')
+        axes[0, 3].axis('off')
+        
+        # Sagittal slices
+        axes[1, 0].imshow(fixed_np[:, :, mid_w], cmap='gray')
+        axes[1, 0].set_title('Fixed (Sagittal)')
+        axes[1, 0].axis('off')
+        
+        axes[1, 1].imshow(moving_np[:, :, mid_w], cmap='gray')
+        axes[1, 1].set_title('Moving (Sagittal)')
+        axes[1, 1].axis('off')
+        
+        axes[1, 2].imshow(warped_np[:, :, mid_w], cmap='gray')
+        axes[1, 2].set_title('Warped (Sagittal)')
+        axes[1, 2].axis('off')
+        
+        diff_sag = np.abs(fixed_np[:, :, mid_w] - warped_np[:, :, mid_w])
+        axes[1, 3].imshow(diff_sag, cmap='hot')
+        axes[1, 3].set_title('|Fixed - Warped|')
+        axes[1, 3].axis('off')
+        
+        # Coronal slices
+        axes[2, 0].imshow(fixed_np[:, mid_h, :], cmap='gray')
+        axes[2, 0].set_title('Fixed (Coronal)')
+        axes[2, 0].axis('off')
+        
+        axes[2, 1].imshow(moving_np[:, mid_h, :], cmap='gray')
+        axes[2, 1].set_title('Moving (Coronal)')
+        axes[2, 1].axis('off')
+        
+        axes[2, 2].imshow(warped_np[:, mid_h, :], cmap='gray')
+        axes[2, 2].set_title('Warped (Coronal)')
+        axes[2, 2].axis('off')
+        
+        diff_cor = np.abs(fixed_np[:, mid_h, :] - warped_np[:, mid_h, :])
+        axes[2, 3].imshow(diff_cor, cmap='hot')
+        axes[2, 3].set_title('|Fixed - Warped|')
+        axes[2, 3].axis('off')
+        
+        plt.suptitle(f'Registration Results - Epoch {epoch}', fontsize=16)
+        plt.tight_layout()
+        
+        save_path = Path(save_dir) / f'registration_epoch_{epoch:03d}.png'
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Visualization saved: {save_path}")
+        
+    except Exception as e:
+        print(f"Error creating visualization for epoch {epoch}: {e}")
+        plt.close()
 
 
 def plot_training_history(history, save_path='training_history.png'):

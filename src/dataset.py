@@ -14,82 +14,13 @@ from scipy.ndimage import shift
 import random
 
 
-class RegistrationDataset(Dataset):
-    def __init__(self, config_path):
-        with open(config_path, 'r') as f:
-            self.config = yaml.safe_load(f)
-        
-        self.data_dir = Path(self.config['data']['root_dir'])
-        self.subjects = self.config['data']['subjects']
-        self.transforms = self._build_transforms()
-        
-        # Load all subjects
-        self.pairs = []
-        for subj in self.subjects:
-            ct_path = self.data_dir / f"{subj}_ct.nii.gz"
-            t2_path = self.data_dir / f"{subj}_t2.nii.gz"
-            if ct_path.exists() and t2_path.exists():
-                self.pairs.append((ct_path, t2_path))
-        
-        # Preprocessing: Normalize and resample (optional)
-        self.preprocess = tio.Compose([
-            tio.RescaleIntensity(out_min_max=(0, 1)),
-            tio.ZNormalization(),
-        ])
-    
-    def _build_transforms(self):
-        """Build random affine transform using TorchIO."""
-        return tio.RandomAffine(
-            degrees=self.config['transforms']['degrees'],
-            translation=self.config['transforms']['translate'],
-            scales=self.config['transforms']['scale'],
-            # shears=self.config['transforms']['shear'],  # TorchIO doesn't support shears
-            image_interpolation='linear',
-            default_pad_value=0
-        )
-    
-    def __len__(self):
-        return len(self.pairs)
-    
-    def __getitem__(self, idx):
-        ct_path, t2_path = self.pairs[idx]
-        
-        # Load volumes
-        ct_img = nib.load(ct_path).get_fdata()
-        t2_img = nib.load(t2_path).get_fdata()
-        
-        # Stack as (C, H, W, D) for TorchIO
-        ct_tensor = torch.from_numpy(ct_img).float().unsqueeze(0)  # (1, H, W, D)
-        t2_tensor = torch.from_numpy(t2_img).float().unsqueeze(0)  # (1, H, W, D)
-        
-        # Create subjects for each modality
-        ct_subject = tio.Subject(ct=tio.ScalarImage(tensor=ct_tensor))
-        t2_subject = tio.Subject(t2=tio.ScalarImage(tensor=t2_tensor))
-        
-        # Apply random affine transformation
-        transformed_ct = self.transforms(ct_subject)
-        moving = transformed_ct.ct.data  # Shape: (1, H, W, D)
-        
-        # Fixed is original T2
-        fixed = t2_tensor  # (1, H, W, D)
-        
-        # Placeholder for inverse affine (extract from transform history if needed)
-        true_inverse = torch.eye(4).flatten()[:12]  # 3x4 matrix flattened
-        
-        return {
-            'fixed': fixed.unsqueeze(0),  # (1, 1, H, W, D)
-            'moving': moving.unsqueeze(0),  # (1, 1, H, W, D)
-            'inverse_affine': true_inverse
-        }
-
-
 class RegistrationDatasetCTonly(Dataset):
     def __init__(self, config_path: str):
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
         self.data_dir = Path(self.config['data']['root_dir'])
-        self.subjects = glob.glob(str(self.data_dir / "**/image.mha"), recursive=True)
+        self.subjects = glob.glob(str(self.data_dir / "**/image.mha"), recursive=True)[:10]
         print("subjects len:", len(self.subjects))
         
         self.target_spacing = np.array(self.config['preprocess']['target_spacing'])
@@ -340,8 +271,8 @@ class RegistrationDatasetCTonly(Dataset):
         )
         
         # Compute inverse affine parameters
-        # inverse_matrix = np.linalg.inv(applied_matrix)
-        # true_inverse_params = self.matrix_to_affine_params(inverse_matrix)
+        inverse_matrix = np.linalg.inv(applied_matrix)
+        inverse_params  = self.matrix_to_affine_params(inverse_matrix)
         
         # Use FORWARD transformation parameters (not inverse)
         forward_params = self.matrix_to_affine_params(applied_matrix)
@@ -359,12 +290,14 @@ class RegistrationDatasetCTonly(Dataset):
         moving_tensor = moving_tensor.permute(0, 1, 4, 3, 2)
         
         forward_affine = torch.tensor(forward_params, dtype=torch.float32)
+        inverse_affine = torch.tensor(inverse_params, dtype=torch.float32)
         
         return {
             'input': input_tensor.squeeze(0),  # (2, D, H, W)
             'fixed': fixed_tensor.squeeze(0),  # (1, D, H, W)
             'moving': moving_tensor.squeeze(0),  # (1, D, H, W)
             'forward_affine': forward_affine,  # (12,) - Changed from inverse_affine
+            'inverse_affine': inverse_affine,
             'landmark_original': landmark_center_voxel.astype(float),
             'landmark_transformed': transformed_center_voxel.astype(float),
             'transform_center': transform_center_voxel.astype(float),
