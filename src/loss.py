@@ -172,7 +172,7 @@ class RegistrationLoss(nn.Module):
         self.lambda_affine = config['loss']['lambda_affine']
         self.lambda_similarity = config['loss'].get('lambda_mi', 
                                                     config['loss'].get('lambda_similarity', 1.0))
-        self.similarity_metric = config['loss'].get('similarity_metric', 'ncc')  # 'mi', 'ncc', or 'lncc'
+        self.similarity_metric = config['loss'].get('similarity_metric', 'ncc')
         
         print(f"Using similarity metric: {self.similarity_metric}")
     
@@ -182,14 +182,14 @@ class RegistrationLoss(nn.Module):
         
         Args:
             predicted_affine: Predicted affine parameters (B, 12)
-            true_affine: Ground truth affine parameters (B, 12)
+            true_affine: Ground truth affine parameters (B, 12) - FORWARD transformation
             fixed: Fixed image (B, C, D, H, W)
             warped: Warped/moved image (B, C, D, H, W)
             
         Returns:
             Total loss
         """
-        # Affine parameter loss (supervised)
+        # Affine parameter loss (supervised) - now using forward transformation
         affine_loss = F.mse_loss(predicted_affine, true_affine)
         
         # Image similarity loss (unsupervised)
@@ -208,7 +208,6 @@ class RegistrationLoss(nn.Module):
             'similarity_loss': similarity_loss.item(),
             'total_loss': total_loss.item()
         }
-
 
 # For backward compatibility
 def mutual_information_legacy(fixed, warped, patch_size=32):

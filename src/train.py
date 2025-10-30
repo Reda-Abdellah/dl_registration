@@ -272,23 +272,25 @@ def main(config_path='config.yaml', experiment_name=None, resume_from=None, devi
                 leave=True
             )
             
+            # In the training loop, replace the forward pass section:
             for batch_idx, batch in enumerate(progress_bar):
                 # Move data to device
                 input_data = batch['input'].to(device)
                 fixed = batch['fixed'].to(device)
                 moving = batch['moving'].to(device)
-                true_affine = batch['inverse_affine'].to(device)
+                # Use forward transformation instead of inverse
+                true_affine = batch['forward_affine'].to(device)  # Changed from inverse_affine
                 
                 # Forward pass
                 optimizer.zero_grad()
                 warped, pred_affine = model(input_data)
                 
+                # Compute loss using fixed and warped images
+                total_loss, loss_dict = loss_fn(pred_affine, true_affine, fixed, warped)
+                
                 # Extract single channel from warped
                 warped_single = warped[:, 1:2]
-                
-                # Compute loss
-                total_loss, loss_dict = loss_fn(pred_affine, true_affine, fixed, warped_single)
-                
+
                 # Backward pass
                 total_loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)

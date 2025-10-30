@@ -1,6 +1,6 @@
 experiment:
   base_dir: 'experiments'  # Base directory for all experiments
-  
+
 data:
   root_dir: "/mnt/d/data/inria_exp/inria_exp/"
   # subjects: ["subject_001", "subject_002"]  # List of subject folders or files
@@ -11,8 +11,8 @@ model:
   in_channels: 2  # Fixed moving concatenated
   localization_channels: [8, 10]  # CNN layers for localization net
   affine_params: 12  # 3x4 affine matrix flattened (for 3D: 12 params)
-  learning_rate: 0.001
-  weight_decay: 0.00001
+  learning_rate: 0.0001
+  weight_decay: 0.0001
   epochs: 100
   # device: "cuda" if available else "cpu"
   device: "cpu"
@@ -24,7 +24,7 @@ transforms:
   shear: [-0.1, 0.1]  # Shearing range
 
 loss:
-  lambda_affine: 1.0  # Weight for affine prediction loss (MSE)
+  lambda_affine: 0.1  # Weight for affine prediction loss (MSE)
   lambda_mi: 1.0      # Weight for mutual information
   patch_size: [64, 64, 64]  # For local MI computation to reduce noise
   lambda_similarity: 0.5  # Renamed from lambda_mi
@@ -35,4 +35,5 @@ preprocess:
   crop_size_mm: [64, 64, 64]
 
 visualization:
-  frequency: 3  # Visualize every 5 epochs
+  gradient_clip_norm: 1.0
+  frequency: 5  # Visualize every 5 epochs

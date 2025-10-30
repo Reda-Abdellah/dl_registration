@@ -304,6 +304,7 @@ class RegistrationDatasetCTonly(Dataset):
         transform_center_voxel = self.get_transform_center(landmark_center_voxel, image_shape)
         
         # Apply spatial augmentation
+        # Apply spatial augmentation
         try:
             ct_tio_aug, applied_matrix, transformed_center_voxel = self._apply_transform_with_center(
                 ct_tio, transform_center_voxel, self.spatial_transform
@@ -339,29 +340,31 @@ class RegistrationDatasetCTonly(Dataset):
         )
         
         # Compute inverse affine parameters
-        inverse_matrix = np.linalg.inv(applied_matrix)
-        true_inverse_params = self.matrix_to_affine_params(inverse_matrix)
+        # inverse_matrix = np.linalg.inv(applied_matrix)
+        # true_inverse_params = self.matrix_to_affine_params(inverse_matrix)
+        
+        # Use FORWARD transformation parameters (not inverse)
+        forward_params = self.matrix_to_affine_params(applied_matrix)
         
         # Convert to tensors with correct dimensions
-        # For PyTorch 3D Conv: (B, C, D, H, W) where D=Z, H=Y, W=X
-        fixed_tensor = torch.from_numpy(fixed_cropped).float().unsqueeze(0).unsqueeze(0)  # (1, 1, X, Y, Z)
-        moving_tensor = torch.from_numpy(moving_cropped).float().unsqueeze(0).unsqueeze(0)  # (1, 1, X, Y, Z)
+        fixed_tensor = torch.from_numpy(fixed_cropped).float().unsqueeze(0).unsqueeze(0)
+        moving_tensor = torch.from_numpy(moving_cropped).float().unsqueeze(0).unsqueeze(0)
         
         # Stack as input: (1, 2, X, Y, Z)
-        input_tensor = torch.cat([fixed_tensor, moving_tensor], dim=1)  # (1, 2, X, Y, Z)
+        input_tensor = torch.cat([fixed_tensor, moving_tensor], dim=1)
         
         # Permute to (B, C, D, H, W) = (1, 2, Z, Y, X)
         input_tensor = input_tensor.permute(0, 1, 4, 3, 2)
         fixed_tensor = fixed_tensor.permute(0, 1, 4, 3, 2)
         moving_tensor = moving_tensor.permute(0, 1, 4, 3, 2)
         
-        true_inverse = torch.tensor(true_inverse_params, dtype=torch.float32)
+        forward_affine = torch.tensor(forward_params, dtype=torch.float32)
         
         return {
             'input': input_tensor.squeeze(0),  # (2, D, H, W)
             'fixed': fixed_tensor.squeeze(0),  # (1, D, H, W)
             'moving': moving_tensor.squeeze(0),  # (1, D, H, W)
-            'inverse_affine': true_inverse,  # (12,)
+            'forward_affine': forward_affine,  # (12,) - Changed from inverse_affine
             'landmark_original': landmark_center_voxel.astype(float),
             'landmark_transformed': transformed_center_voxel.astype(float),
             'transform_center': transform_center_voxel.astype(float),
