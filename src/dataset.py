@@ -20,7 +20,7 @@ class RegistrationDatasetCTonly(Dataset):
             self.config = yaml.safe_load(f)
         
         self.data_dir = Path(self.config['data']['root_dir'])
-        self.subjects = glob.glob(str(self.data_dir / "**/image.mha"), recursive=True)[:10]
+        self.subjects = glob.glob(str(self.data_dir / "**/image.mha"), recursive=True)#[:10]
         print("subjects len:", len(self.subjects))
         
         self.target_spacing = np.array(self.config['preprocess']['target_spacing'])
@@ -34,9 +34,9 @@ class RegistrationDatasetCTonly(Dataset):
         self.spacing_transform = tio.Resample(self.target_spacing)
         
         # Intensity normalization
-        self.intensity_transform = tio.Compose([
+        self.intensity_normalization = tio.Compose([
             tio.RescaleIntensity(out_min_max=(0, 1)),
-            tio.ZNormalization(),
+            # tio.ZNormalization(),
         ])
         
         # Load subjects with landmarks
@@ -123,30 +123,158 @@ class RegistrationDatasetCTonly(Dataset):
         print(f"Warning: Using landmark center after {max_attempts} attempts.")
         return landmark_center_voxel.astype(int)
     
-    def _apply_transform_with_center(self, image: tio.ScalarImage, center_voxel: np.ndarray, 
-                                   transform: tio.RandomAffine) -> Tuple[tio.ScalarImage, np.ndarray, np.ndarray]:
-        """Apply transform with specific center point."""
-        # Apply transform and extract parameters
-        transformed_subject = tio.Subject(image=image)
-        transformed_subject = transform(transformed_subject)
-        transformed_image = transformed_subject.image
+    def _apply_transform_with_center(self, image: tio.ScalarImage, center_physical: np.ndarray) -> Tuple[tio.ScalarImage, np.ndarray, np.ndarray]:
+        """Apply transform by manually sampling parameters."""
         
-        # Get the transformation matrix from the image's history
-        # TorchIO stores this in the image's affine change
-        original_affine = image.affine
-        transformed_affine = transformed_image.affine
+        # Sample transformation parameters manually
+        degrees_range = self.config['transforms']['degrees']  # e.g., [-15, 15]
+        translate_range = self.config['transforms']['translate']  # e.g., [0.3, 0.3, 0.3]
+        scale_range = self.config['transforms']['scale']  # e.g., [0.9, 1.1]
         
-        # Compute the applied transformation matrix
-        applied_matrix = transformed_affine @ np.linalg.inv(original_affine)
+        # Sample random parameters
+        rotation_x = np.random.uniform(degrees_range[0], degrees_range[1])
+        rotation_y = np.random.uniform(degrees_range[0], degrees_range[1]) 
+        rotation_z = np.random.uniform(degrees_range[0], degrees_range[1])
         
-        # Transform the center point
-        center_physical = self._voxel_to_physical(center_voxel, original_affine)
-        center_homogeneous = np.append(center_physical, 1)
-        transformed_center_homogeneous = applied_matrix @ center_homogeneous
-        transformed_center_physical = transformed_center_homogeneous[:3]
-        transformed_center_voxel = self._physical_to_voxel(transformed_center_physical, transformed_affine)
+        translation_x = np.random.uniform(-translate_range[0], translate_range[0])
+        translation_y = np.random.uniform(-translate_range[1], translate_range[1])
+        translation_z = np.random.uniform(-translate_range[2], translate_range[2])
         
-        return transformed_image, applied_matrix, transformed_center_voxel
+        scale = np.random.uniform(scale_range[0], scale_range[1])
+        # print(rotation_x, rotation_y, rotation_z, translation_x, translation_y, translation_z, scale)
+        
+        # Convert to transformation matrix
+        applied_matrix = self._create_affine_matrix(
+            rotation_x, rotation_y, rotation_z,
+            translation_x, translation_y, translation_z,
+            scale
+        )
+        
+        # Apply transformation using the matrix
+        transformed_image = self._apply_matrix_to_image(image, applied_matrix, center_physical)
+        
+        return transformed_image, applied_matrix
+
+    def _create_affine_matrix(self, rot_x, rot_y, rot_z, trans_x, trans_y, trans_z, scale):
+        """Create 4x4 affine transformation matrix from parameters."""
+        
+        # Convert degrees to radians
+        rot_x = np.radians(rot_x)
+        rot_y = np.radians(rot_y) 
+        rot_z = np.radians(rot_z)
+        
+        # Create rotation matrices
+        Rx = np.array([
+            [1, 0, 0],
+            [0, np.cos(rot_x), -np.sin(rot_x)],
+            [0, np.sin(rot_x), np.cos(rot_x)]
+        ])
+        
+        Ry = np.array([
+            [np.cos(rot_y), 0, np.sin(rot_y)],
+            [0, 1, 0],
+            [-np.sin(rot_y), 0, np.cos(rot_y)]
+        ])
+        
+        Rz = np.array([
+            [np.cos(rot_z), -np.sin(rot_z), 0],
+            [np.sin(rot_z), np.cos(rot_z), 0],
+            [0, 0, 1]
+        ])
+        
+        # Combined rotation matrix
+        R = Rz @ Ry @ Rx
+        
+        # Scale matrix
+        S = np.eye(3) * scale
+        
+        # Combined rotation and scale
+        RS = R @ S
+        
+        # Create 4x4 affine matrix
+        affine_matrix = np.eye(4)
+        affine_matrix[:3, :3] = RS
+        affine_matrix[:3, 3] = [trans_x, trans_y, trans_z]
+        
+        return affine_matrix
+
+    def _apply_matrix_to_image(self, image: tio.ScalarImage, transform_matrix: np.ndarray, center_physical: np.ndarray) -> tio.ScalarImage:
+        """Apply 4x4 transformation matrix to image using SimpleITK."""
+               
+        # Convert TorchIO image to SimpleITK
+        sitk_image = self._torchio_to_sitk(image)
+        
+        # Create SimpleITK affine transform from matrix
+        affine_transform = sitk.AffineTransform(3)  # 3D affine transform
+        
+        # SimpleITK expects the transformation matrix in a specific format
+        # Extract rotation/scale matrix (3x3) and translation vector (3x1)
+        matrix_3x3 = transform_matrix[:3, :3].flatten()  # Flatten to 9 elements
+        translation = transform_matrix[:3, 3]
+        
+        # Set parameters: [matrix elements (9), translation (3)]
+        affine_transform.SetMatrix(matrix_3x3.tolist())
+        affine_transform.SetTranslation(translation.tolist())
+
+        affine_transform.SetCenter(center_physical)
+        
+        # Apply transformation with resampling
+        resampler = sitk.ResampleImageFilter()
+        resampler.SetReferenceImage(sitk_image)  # Use original image as reference
+        resampler.SetInterpolator(sitk.sitkLinear)
+        resampler.SetDefaultPixelValue(0.0)
+        resampler.SetTransform(affine_transform)
+        
+        # Resample the image
+        transformed_sitk = resampler.Execute(sitk_image)
+        
+        # Convert back to TorchIO
+        transformed_image = self._sitk_to_torchio(transformed_sitk, image.affine)
+        
+        return transformed_image
+
+    def _torchio_to_sitk(self, tio_image: tio.ScalarImage) -> sitk.Image:
+        """Convert TorchIO image to SimpleITK image."""
+        
+        # Get numpy array from TorchIO tensor
+        # TorchIO format: (1, H, W, D) -> SimpleITK format: (D, H, W)
+        numpy_array = tio_image.data.squeeze(0).numpy()  # Remove channel dimension
+        numpy_array = np.transpose(numpy_array, (2, 1, 0))  # (H, W, D) -> (D, W, H)
+        
+        # Create SimpleITK image
+        sitk_image = sitk.GetImageFromArray(numpy_array)
+        
+        # Set spacing and origin from TorchIO affine matrix
+        affine = tio_image.affine#.numpy()
+        
+        # Extract spacing (diagonal elements)
+        spacing = np.sqrt(np.sum(affine[:3, :3] ** 2, axis=0))
+        sitk_image.SetSpacing(spacing.tolist())
+        
+        # Extract origin (translation part)
+        origin = affine[:3, 3]
+        sitk_image.SetOrigin(origin.tolist())
+        
+        # Extract direction (normalized rotation/orientation)
+        direction = affine[:3, :3] / spacing
+        sitk_image.SetDirection(direction.flatten().tolist())
+        
+        return sitk_image
+
+    def _sitk_to_torchio(self, sitk_image: sitk.Image, original_affine: torch.Tensor) -> tio.ScalarImage:
+        """Convert SimpleITK image back to TorchIO image."""
+        
+        # Get numpy array from SimpleITK
+        numpy_array = sitk.GetArrayFromImage(sitk_image)  # Shape: (D, W, H)
+        numpy_array = np.transpose(numpy_array, (2, 1, 0))  # (D, W, H) -> (H, W, D)
+        
+        # Convert to tensor and add channel dimension
+        tensor = torch.from_numpy(numpy_array).float().unsqueeze(0)  # (1, H, W, D)
+        
+        # Create TorchIO image (keep original affine for consistency)
+        tio_image = tio.ScalarImage(tensor=tensor, affine=original_affine)
+        
+        return tio_image
     
     def _build_affine_from_sitk(self, sitk_img: sitk.Image) -> np.ndarray:
         """Construct 4x4 affine matrix from SimpleITK image metadata."""
@@ -232,22 +360,20 @@ class RegistrationDatasetCTonly(Dataset):
         landmark_center_voxel = np.clip(landmark_center_voxel, min_bounds, max_bounds).astype(int)
         
         # Sample transform center
-        transform_center_voxel = self.get_transform_center(landmark_center_voxel, image_shape)
+        # transform_center_voxel = self.get_transform_center(landmark_center_voxel, image_shape)
         
         # Apply spatial augmentation
         # Apply spatial augmentation
         try:
-            ct_tio_aug, applied_matrix, transformed_center_voxel = self._apply_transform_with_center(
-                ct_tio, transform_center_voxel, self.spatial_transform
-            )
+            ct_tio_aug, applied_matrix = self._apply_transform_with_center(ct_tio, landmark_center_mm)
         except Exception as e:
             print(f"Transform error for sample {idx}: {e}. Using identity.")
             ct_tio_aug = ct_tio
             applied_matrix = np.eye(4)
-            transformed_center_voxel = landmark_center_voxel
         
         # Intensity normalization
-        ct_tio_aug = self.intensity_transform(ct_tio_aug)
+        ct_tio_aug = self.intensity_normalization(ct_tio_aug)
+        ct_tio = self.intensity_normalization(ct_tio)
         
         # Extract data tensors (shape: (1, X, Y, Z))
         fixed_data = ct_tio.data[0]  # (X, Y, Z)
@@ -265,7 +391,7 @@ class RegistrationDatasetCTonly(Dataset):
         
         moving_cropped = self.crop_volume(
             moving_data.numpy(),
-            transformed_center_voxel,
+            landmark_center_voxel,
             patch_size=self.patch_size_vox,
             voxel_size=current_spacing
         )
@@ -299,8 +425,6 @@ class RegistrationDatasetCTonly(Dataset):
             'forward_affine': forward_affine,  # (12,) - Changed from inverse_affine
             'inverse_affine': inverse_affine,
             'landmark_original': landmark_center_voxel.astype(float),
-            'landmark_transformed': transformed_center_voxel.astype(float),
-            'transform_center': transform_center_voxel.astype(float),
             'patch_shape': np.array([self.patch_size_vox, self.patch_size_vox, self.patch_size_vox])
         }
     

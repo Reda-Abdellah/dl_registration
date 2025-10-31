@@ -1,13 +1,13 @@
 from src.train import main
 
 # # Simple call with defaults
-# results = main()
+results = main()
 
 # With custom parameters
-results = main(
-    config_path='config.yaml',
-    experiment_name='my_first_experiment',
-    )
+# results = main(
+#     config_path='config.yaml',
+#     experiment_name='my_first_experiment',
+#     )
 
 # # Resume from checkpoint programmatically
 # results = main(

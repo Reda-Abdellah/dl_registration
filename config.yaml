@@ -18,17 +18,17 @@ model:
   device: "cpu"
 
 transforms:
-  degrees: [-15, 15]  # Rotation range in degrees
-  translate: [0.3, 0.3, 0.3]  # Fraction of FOV for translation
+  degrees: [-20, 20]  # Rotation range in degrees
+  translate: [1, 1, 1]  # In mm
   scale: [0.9, 1.1]  # Scaling range
   shear: [-0.1, 0.1]  # Shearing range
 
 loss:
-  lambda_affine: 0.1  # Weight for affine prediction loss (MSE)
+  lambda_affine: 1.0  # Weight for affine prediction loss (MSE)
   lambda_mi: 1.0      # Weight for mutual information
   patch_size: [64, 64, 64]  # For local MI computation to reduce noise
   lambda_similarity: 0.5  # Renamed from lambda_mi
-  similarity_metric: 'ncc'  # Options: 'ncc', 'lncc', 'mi'
+  similarity_metric: 'mse'  # Options: 'ncc', 'lncc', 'mi', 'mse'
 
 preprocess:
   target_spacing: [1,1,1]

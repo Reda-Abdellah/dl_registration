@@ -347,6 +347,7 @@ def main(config_path='config.yaml', experiment_name=None, resume_from=None, devi
                     if batch_idx == 0:
                         print(f"Debug - Warped shape: {warped.shape}")
                     
+                    # print(pred_affine, true_affine)
                     # Compute loss
                     total_loss, loss_dict = loss_fn(pred_affine, true_affine, fixed, warped)
                     

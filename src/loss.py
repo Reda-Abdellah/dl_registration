@@ -195,6 +195,8 @@ class RegistrationLoss(nn.Module):
         # Image similarity loss (unsupervised)
         if self.similarity_metric == 'mi':
             similarity_loss = mutual_information(fixed, warped)
+        if self.similarity_metric == 'mse':
+            similarity_loss = F.mse_loss(fixed, warped)
         elif self.similarity_metric == 'lncc':
             similarity_loss = local_normalized_cross_correlation(fixed, warped)
         else:  # 'ncc' (default)
