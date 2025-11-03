@@ -277,13 +277,14 @@ def main(config_path='config.yaml', experiment_name=None, resume_from=None, devi
     debug_dataset_sample(dataset, device)
     
     # Test model with a dummy input
-    try:
-        dummy_input = torch.randn(1, 2, 32, 32, 32).to(device)
-        warped, pred_affine = model(dummy_input)
-        print(f"✅ Model test successful: warped={warped.shape}, affine={pred_affine.shape}")
-    except Exception as e:
-        print(f"❌ Model test failed: {e}")
-        return
+    # try:
+    #     dummy_input = torch.randn(1, 2, 32, 32, 32).to(device)
+    #     dummy_affine = torch.randn(1,1, 4, 3).to(device)
+    #     warped, pred_affine = model(dummy_input, dummy_affine)
+    #     print(f"✅ Model test successful: warped={warped.shape}, affine={pred_affine.shape}")
+    # except Exception as e:
+    #     print(f"❌ Model test failed: {e}")
+    #     return
     
     # Load checkpoint if resuming
     start_epoch = 0
@@ -320,6 +321,7 @@ def main(config_path='config.yaml', experiment_name=None, resume_from=None, devi
                     moving = batch['moving'].to(device)
                     
                     # Use inverse_affine for now (keep existing dataset structure)
+                    # true_affine = batch['forward_affine'].to(device)
                     true_affine = batch['inverse_affine'].to(device)
                     
                     # Debug: Check tensor shapes on first batch
@@ -336,6 +338,7 @@ def main(config_path='config.yaml', experiment_name=None, resume_from=None, devi
                     
                     # Forward pass
                     optimizer.zero_grad()
+                    # warped, pred_affine = model(input_data, true_affine)
                     warped, pred_affine = model(input_data)
                     
                     # Validate model output

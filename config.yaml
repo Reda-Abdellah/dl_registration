@@ -19,7 +19,7 @@ model:
 
 transforms:
   degrees: [-20, 20]  # Rotation range in degrees
-  translate: [1, 1, 1]  # In mm
+  translate: [3, 3, 3]  # In mm
   scale: [0.9, 1.1]  # Scaling range
   shear: [-0.1, 0.1]  # Shearing range
 
@@ -31,8 +31,9 @@ loss:
   similarity_metric: 'mse'  # Options: 'ncc', 'lncc', 'mi', 'mse'
 
 preprocess:
-  target_spacing: [1,1,1]
+  target_spacing: [0.8,0.8,0.8]
   crop_size_mm: [64, 64, 64]
+  augmentation_fov_multiplier: 1  # FOV multiplier for augmentation cropping
 
 visualization:
   gradient_clip_norm: 1.0
