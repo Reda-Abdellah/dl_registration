@@ -133,15 +133,17 @@ class RegistrationDatasetCTonly(Dataset):
             inverse_theta: inverse transformation (3x4)
         """
         # Rotation: small angles (±15 degrees)
-        max_rotation = np.deg2rad(15)
+        rotation_angles = self.config.get('transforms', {}).get('degrees', [15, 15])
+        max_rotation = np.deg2rad(rotation_angles[1])
         rotation_angles = np.random.uniform(-max_rotation, max_rotation, 3)
         
         # Scale: ±10% variation
-        scale_factors = np.random.uniform(0.9, 1.1, 3)
+        scale_coeff = self.config.get('transforms', {}).get('scale', [0.9, 1.1])
+        scale_factors = np.random.uniform(scale_coeff[0], scale_coeff[1], 3)
         
         # Translation: ±0.15 in normalized coordinates [-1, 1]
-        max_translation = 0.15
-        translation = np.random.uniform(-max_translation, max_translation, 3)
+        max_translation = self.config.get('transforms', {}).get('translate', 0.15)
+        translation = np.random.uniform(-max_translation[0], max_translation[0], 3)
         
         # Forward transformation
         forward_theta = self._build_affine_matrix_3x4(rotation_angles, scale_factors, translation)

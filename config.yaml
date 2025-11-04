@@ -19,7 +19,7 @@ model:
 
 transforms:
   degrees: [-20, 20]  # Rotation range in degrees
-  translate: [3, 3, 3]  # In mm
+  translate: [0.15, 0.15, 0.15]  # In %
   scale: [0.9, 1.1]  # Scaling range
   shear: [-0.1, 0.1]  # Shearing range
 
